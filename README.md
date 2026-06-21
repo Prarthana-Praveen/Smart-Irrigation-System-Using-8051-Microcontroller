@@ -88,7 +88,18 @@ This project addresses these issues through an automated and low-cost irrigation
 * Cloud data logging and analytics
 
 ---
+## Block Diagram
+<img width="1402" height="787" alt="blockdiagram" src="https://github.com/user-attachments/assets/391bc1fc-67ac-4440-82e1-51bf40952139" />
 
+---
+
+## Project Photos
+
+<img width="963" height="625" alt="IMG-20260618-WA0008" src="https://github.com/user-attachments/assets/02eed636-7ebc-44df-a3f2-010a82aca815" />
+<img width="879" height="614" alt="IMG-20260618-WA0009" src="https://github.com/user-attachments/assets/8d73cc1a-b777-43de-ac01-2cb00e392949" />
+<img width="899" height="625" alt="IMG-20260320-WA0035" src="https://github.com/user-attachments/assets/d4ca891c-d7d8-4666-a0fb-c83394425863" />
+
+---
 ## Team Members
 
 * Aryananda S
