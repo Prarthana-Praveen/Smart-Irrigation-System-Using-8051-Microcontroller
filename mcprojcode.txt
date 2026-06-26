@@ -1,0 +1,223 @@
+/*
+ * ============================================================
+ *  Smart Irrigation System — AT89S52
+ *  Compiler : Keil uVision (C51)
+ *  Crystal  : 11.0592 MHz
+ *  LCD Mode : 4-bit
+ *
+ * ============================================================
+ *  VERIFIED SENSOR AND RELAY LOGIC
+ * ---------------------------------------------------------------
+ *  Soil sensor:
+ *    Soil WET  ? LED ON  ? DO = 0 ? pump OFF
+ *    Soil DRY  ? LED OFF ? DO = 1 ? check water
+ *
+ *  Water level sensor:
+ *    Water PRESENT ? DO = 1 (HIGH) ? pump ON
+ *    Tank EMPTY    ? DO = 0 (LOW)  ? pump OFF
+ *
+ *  RELAY: Active LOW (after JD-VCC separation)
+ *    P2.0 = 0 ? relay ON  ? pump runs
+ *    P2.0 = 1 ? relay OFF ? pump stops
+ *
+ *  PUMP ON only when:
+ *    SOIL_SENSOR == 1 (dry)
+ *    AND
+ *    WATER_SENSOR == 1 (water present)
+ *
+ * ============================================================
+ *  PIN MAP
+ * ---------------------------------------------------------------
+ *  LCD RS?P1.0 | EN?P1.1 | D4?P1.2 | D5?P1.3
+ *  LCD D6?P1.4 | D7?P1.5 | D0-D3 leave unconnected
+ *  LCD Pin1?GND | Pin2?5V | Pin3?Pot mid | Pin5?GND
+ *  Pin15?5V | Pin16?GND
+ *
+ *  Relay IN1       ? P2.0
+ *  Soil sensor  DO ? P2.1
+ *  Water sensor DO ? P2.2
+ *
+ *  12V+ ? Relay COM | Relay NO ? Motor+ | Motor- ? 12V-
+ *  5V GND and 12V GND joined on breadboard
+ * ---------------------------------------------------------------
+ */
+
+#include <reg52.h>
+
+/* -- LCD pins ----------------------------------------------- */
+sbit LCD_RS = P1^0;
+sbit LCD_EN = P1^1;
+sbit LCD_D4 = P1^2;
+sbit LCD_D5 = P1^3;
+sbit LCD_D6 = P1^4;
+sbit LCD_D7 = P1^5;
+
+/* -- Control pins ------------------------------------------- */
+sbit RELAY        = P2^0;   /* Active LOW: 0=ON,  1=OFF      */
+sbit SOIL_SENSOR  = P2^1;   /* 0=wet,  1=dry                 */
+sbit WATER_SENSOR = P2^2;   /* 1=water present,  0=empty     */
+
+/* -- Relay control macros ----------------------------------- */
+#define RELAY_ON    0       /* Active LOW: 0 turns relay ON   */
+#define RELAY_OFF   1       /* Active LOW: 1 turns relay OFF  */
+
+/* -- Delay -------------------------------------------------- */
+void delay_ms(unsigned int ms)
+{
+    unsigned int i, j;
+    for (i = 0; i < ms; i++)
+        for (j = 0; j < 112; j++);
+}
+
+/* -- LCD 4-bit driver --------------------------------------- */
+void lcd_write_nibble(unsigned char nibble)
+{
+    LCD_D4 = (nibble >> 4) & 1;
+    LCD_D5 = (nibble >> 5) & 1;
+    LCD_D6 = (nibble >> 6) & 1;
+    LCD_D7 = (nibble >> 7) & 1;
+    LCD_EN = 1; delay_ms(1);
+    LCD_EN = 0; delay_ms(2);
+}
+
+void lcd_send_command(unsigned char cmd)
+{
+    LCD_RS = 0;
+    lcd_write_nibble(cmd);
+    lcd_write_nibble(cmd << 4);
+    delay_ms(2);
+}
+
+void lcd_send_data(unsigned char dat)
+{
+    LCD_RS = 1;
+    lcd_write_nibble(dat);
+    lcd_write_nibble(dat << 4);
+    delay_ms(2);
+}
+
+void lcd_print(unsigned char *str)
+{
+    while (*str) { lcd_send_data(*str); str++; }
+}
+
+void lcd_set_cursor(unsigned char row, unsigned char col)
+{
+    unsigned char address;
+    address = (row == 0) ? (0x80 + col) : (0xC0 + col);
+    lcd_send_command(address);
+}
+
+void lcd_init(void)
+{
+    LCD_EN = 0;
+    LCD_RS = 0;
+    delay_ms(50);
+
+    /* Three wake-up pulses */
+    LCD_D4=1; LCD_D5=1; LCD_D6=0; LCD_D7=0;
+    LCD_EN=1; delay_ms(1); LCD_EN=0; delay_ms(5);
+    LCD_EN=1; delay_ms(1); LCD_EN=0; delay_ms(1);
+    LCD_EN=1; delay_ms(1); LCD_EN=0; delay_ms(1);
+
+    /* Switch to 4-bit mode */
+    LCD_D4=0; LCD_D5=1; LCD_D6=0; LCD_D7=0;
+    LCD_EN=1; delay_ms(1); LCD_EN=0; delay_ms(1);
+
+    /* Configure */
+    lcd_send_command(0x28); delay_ms(1);
+    lcd_send_command(0x08); delay_ms(1);
+    lcd_send_command(0x01); delay_ms(3);
+    lcd_send_command(0x06); delay_ms(1);
+    lcd_send_command(0x0C); delay_ms(1);
+}
+
+/* -- LCD messages ------------------------------------------- */
+void show_boot_message(void)
+{
+    lcd_send_command(0x01); delay_ms(3);
+    lcd_set_cursor(0, 0); lcd_print("Smart Irrign");
+    lcd_set_cursor(1, 0); lcd_print("System Ready");
+    delay_ms(2000);
+}
+
+void show_soil_wet(void)
+{
+    lcd_send_command(0x01); delay_ms(3);
+    lcd_set_cursor(0, 0); lcd_print("Soil  : WET ");
+    lcd_set_cursor(1, 0); lcd_print("Pump  : OFF ");
+}
+
+void show_no_water(void)
+{
+    lcd_send_command(0x01); delay_ms(3);
+    lcd_set_cursor(0, 0); lcd_print("No Water!   ");
+    lcd_set_cursor(1, 0); lcd_print("Pump  : OFF ");
+}
+
+void show_watering(void)
+{
+    lcd_send_command(0x01); delay_ms(3);
+    lcd_set_cursor(0, 0); lcd_print("Soil  : DRY ");
+    lcd_set_cursor(1, 0); lcd_print("Pump  : ON  ");
+}
+
+/* -- Main --------------------------------------------------- */
+void main(void)
+{
+    unsigned int i;
+
+    /*
+     * Active LOW relay — safe startup state is HIGH (1).
+     * P2 = 0xFF pulls all P2 pins HIGH immediately.
+     * P2.0 = 1 means relay OFF for active LOW board.
+     */
+    P2 = 0xFF;          /* All P2 HIGH — relay OFF            */
+    P1 = 0x00;          /* All LCD pins LOW                   */
+
+    /* Hold relay OFF for 500ms while everything stabilises   */
+    for (i = 0; i < 500; i++)
+    {
+        RELAY = RELAY_OFF;  /* Keep asserting HIGH = OFF       */
+        delay_ms(1);
+    }
+
+    lcd_init();
+    show_boot_message();
+
+    while (1)
+    {
+        /*
+         * SOIL CHECK
+         * SOIL_SENSOR == 0 ? wet  ? pump OFF
+         * SOIL_SENSOR == 1 ? dry  ? check water
+         */
+        if (SOIL_SENSOR == 0)
+        {
+            RELAY = RELAY_OFF;
+            show_soil_wet();
+        }
+        else
+        {
+            /*
+             * WATER CHECK
+             * WATER_SENSOR == 1 ? water present ? pump ON
+             * WATER_SENSOR == 0 ? tank empty    ? pump OFF
+             */
+            if (WATER_SENSOR == 1)
+            {
+                /* Soil DRY + water present — activate pump   */
+                RELAY = RELAY_ON;
+                show_watering();
+            }
+            else
+            {
+                /* Soil DRY + tank empty — protect motor      */
+                RELAY = RELAY_OFF;
+                show_no_water();
+            }
+        }
+
+        delay_ms(500);
+    }
+}
